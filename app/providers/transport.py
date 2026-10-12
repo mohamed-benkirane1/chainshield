@@ -7,6 +7,7 @@ embeds an API key.
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from app.providers.base import (
@@ -19,8 +20,17 @@ MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
 
 class JsonRpcTransport(Protocol):
-    def post_json(self, url: str, payload: dict[str, Any], timeout: float) -> Any:
+    def post_json(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        timeout: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> Any:
         """POST ``payload`` as JSON and return the decoded JSON body.
+
+        ``headers`` are sent in addition to the JSON content headers; they may
+        carry credentials and are never included in errors.
 
         Raises ``ProviderTimeoutError``, ``ProviderUnavailableError`` or
         ``MalformedResponseError``.
@@ -40,11 +50,21 @@ class UrllibTransport:
     def __init__(self) -> None:
         self._opener = urllib.request.build_opener(_NoRedirectHandler)
 
-    def post_json(self, url: str, payload: dict[str, Any], timeout: float) -> Any:
+    def post_json(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        timeout: float,
+        headers: Mapping[str, str] | None = None,
+    ) -> Any:
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                **(headers or {}),
+            },
             method="POST",
         )
         try:

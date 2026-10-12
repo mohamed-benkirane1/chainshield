@@ -9,10 +9,13 @@ from app.domain.analysis_input import Network
 
 
 class TransactionStatus(StrEnum):
-    PENDING = "pending"
+    PENDING = "pending"  # known to the node, not yet included in a block
+    # Included in a block but not yet final (e.g. TRON before solidification);
+    # its execution outcome is not reported until it is final.
+    UNCONFIRMED = "unconfirmed"
     SUCCESS = "success"
-    REVERTED = "reverted"
-    NOT_FOUND = "not_found"
+    REVERTED = "reverted"  # included in a block, execution failed
+    NOT_FOUND = "not_found"  # unknown to the node that was queried
 
 
 class NativeUnit(StrEnum):
@@ -133,6 +136,17 @@ class ReceiptUnavailableError(ProviderError):
     caller may retry later. The transaction outcome is unknown: it is neither
     pending nor known to have succeeded or reverted.
     """
+
+
+class ExecutionResultUnknownError(ProviderError):
+    """The backend data does not establish whether execution succeeded.
+
+    The outcome is neither reported as success nor as reverted.
+    """
+
+
+class UnsupportedTransactionError(ProviderError):
+    """The transaction type is not supported by this provider."""
 
 
 class RpcError(ProviderError):
