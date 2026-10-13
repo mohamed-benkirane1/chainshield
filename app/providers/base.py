@@ -138,6 +138,14 @@ class ReceiptUnavailableError(ProviderError):
     """
 
 
+class TransactionNotFoundError(ProviderError):
+    """The transaction is unknown to the node, so it has no executed effects."""
+
+
+class TransactionPendingError(ProviderError):
+    """The transaction is not yet included in a block, so it has not executed."""
+
+
 class ExecutionResultUnknownError(ProviderError):
     """The backend data does not establish whether execution succeeded.
 
