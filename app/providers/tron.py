@@ -32,12 +32,15 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import base58
+from eth_utils import keccak
 
 from app.domain.analysis_input import (
     Network,
     normalize_transaction_hash,
     validate_tron_address,
 )
+from app.domain.token_transfer import NormalizedTokenTransfer
+from app.domain.usdt_registry import ContractMatch, check_usdt_contract, get_usdt_contract
 from app.providers.base import (
     ExecutionResultUnknownError,
     MalformedResponseError,
@@ -46,7 +49,9 @@ from app.providers.base import (
     ProviderConfigurationError,
     ProviderError,
     ReceiptUnavailableError,
+    TransactionNotFoundError,
     TransactionStatus,
+    TransactionUnconfirmedError,
     UnsupportedTransactionError,
 )
 from app.providers.transport import JsonRpcTransport, UrllibTransport
@@ -86,6 +91,14 @@ _FAILED_CONTRACT_RESULTS = frozenset(
 )
 
 _HEX_ADDRESS_RE = re.compile(r"41[0-9a-fA-F]{40}")
+# Event logs (TransactionInfo.log) use bare hex: 20-byte address without the
+# 41 prefix, 32-byte topics and data words without 0x.
+_LOG_ADDRESS_RE = re.compile(r"[0-9a-fA-F]{40}")
+_LOG_WORD_RE = re.compile(r"[0-9a-fA-F]{64}")
+_ADDRESS_PADDING = "0" * 24  # 12 zero bytes before a 20-byte address
+
+# keccak256("Transfer(address,address,uint256)"), the TRC-20 Transfer topic.
+TRC20_TRANSFER_TOPIC = keccak(text="Transfer(address,address,uint256)").hex()
 _API_KEY_RE = re.compile(r"[\x21-\x7e]{1,256}")  # visible ASCII, no whitespace
 
 
@@ -125,6 +138,63 @@ def hex_to_base58_address(value: object, field: str = "address") -> str:
     # The regex guarantees the 0x41 prefix and the 21-byte length.
     raw = bytes.fromhex(value)
     return validate_tron_address(base58.b58encode_check(raw).decode("ascii"))
+
+
+def _parse_log_word(value: object, field: str) -> str:
+    if not isinstance(value, str) or not _LOG_WORD_RE.fullmatch(value):
+        raise MalformedResponseError(f"invalid {field} in TRON response")
+    return value.lower()
+
+
+def _log_word_to_address(word: str, field: str) -> str:
+    """Decode an indexed address topic: 12 zero bytes then 20 address bytes."""
+    if word[:24] != _ADDRESS_PADDING:
+        raise MalformedResponseError(f"{field} topic is not a zero-padded address")
+    return hex_to_base58_address("41" + word[24:], field)
+
+
+def decode_usdt_transfer_logs(logs: list[Any], tx_hash: str) -> list[NormalizedTokenTransfer]:
+    """Decode the official USDT ``Transfer`` events of a solidified receipt.
+
+    Logs from other contracts are ignored even if they mimic ``Transfer``;
+    other USDT events are ignored. An official USDT ``Transfer`` that is
+    malformed raises ``MalformedResponseError``. TRON logs carry no index, so
+    ``log_index`` is ``None`` and the list keeps the emission order.
+    """
+    usdt = get_usdt_contract(Network.TRON)
+    transfers: list[NormalizedTokenTransfer] = []
+    for log in logs:
+        log = _require_object(log, "receipt log")
+        address = log.get("address")
+        if not isinstance(address, str) or not _LOG_ADDRESS_RE.fullmatch(address):
+            raise MalformedResponseError("invalid log address in TRON response")
+        emitter = hex_to_base58_address("41" + address, "log address")
+        topics = log.get("topics", [])  # proto3 JSON omits empty lists
+        if not isinstance(topics, list):
+            raise MalformedResponseError("invalid log topics in TRON response")
+
+        # Identify USDT by emitting contract only, never by name or symbol.
+        if check_usdt_contract(Network.TRON, emitter) is not ContractMatch.MATCH:
+            continue
+        words = [_parse_log_word(topic, "log topic") for topic in topics]
+        if not words or words[0] != TRC20_TRANSFER_TOPIC:
+            continue  # another USDT event (Approval, ...)
+        if len(words) != 3:
+            raise MalformedResponseError("USDT Transfer log must have exactly 3 topics")
+        transfers.append(
+            NormalizedTokenTransfer(
+                network=Network.TRON,
+                tx_hash=tx_hash,
+                token_symbol=usdt.token,
+                token_contract=usdt.contract_address,
+                from_address=_log_word_to_address(words[1], "sender"),
+                to_address=_log_word_to_address(words[2], "recipient"),
+                amount_atomic=int(_parse_log_word(log.get("data"), "log data"), 16),
+                decimals=usdt.decimals,
+                log_index=None,
+            )
+        )
+    return transfers
 
 
 class TronProvider:
@@ -180,13 +250,41 @@ class TronProvider:
         return f"{type(self).__name__}(network={self.network.value!r})"
 
     def get_transaction(self, tx_hash: str) -> NormalizedTransaction:
+        return self._lookup(tx_hash)[0]
+
+    def get_usdt_transfers(self, tx_hash: str) -> list[NormalizedTokenTransfer]:
+        """Return the official USDT transfers executed by a solidified transaction.
+
+        ``[]`` means the transaction executed (or reverted) without any
+        official USDT ``Transfer`` event. Raises ``TransactionNotFoundError``
+        or ``TransactionUnconfirmedError`` when there is no final execution,
+        and the errors of ``get_transaction`` otherwise (receipt unavailable,
+        unknown execution result, unsupported contract type...).
+        """
+        tx, info = self._lookup(tx_hash)
+        if tx.status is TransactionStatus.NOT_FOUND:
+            raise TransactionNotFoundError("transaction is unknown to the node")
+        if tx.status is TransactionStatus.UNCONFIRMED or info is None:
+            raise TransactionUnconfirmedError("transaction is not solidified yet")
+        logs = info.get("log", [])  # proto3 JSON omits an empty log list
+        if not isinstance(logs, list):
+            raise MalformedResponseError("invalid receipt logs in TRON response")
+        if tx.status is TransactionStatus.REVERTED:
+            # A reverted execution discards its events: nothing was transferred.
+            if logs:
+                raise MalformedResponseError("reverted transaction receipt has logs")
+            return []
+        return decode_usdt_transfer_logs(logs, tx.tx_hash)
+
+    def _lookup(self, tx_hash: str) -> tuple[NormalizedTransaction, dict[str, Any] | None]:
+        """Look up a transaction; also return its solidified info, if any."""
         tx_hash = normalize_transaction_hash(Network.TRON, tx_hash)
 
         tx = self._post(GET_TRANSACTION_PATH, tx_hash)
         if not tx:
             return NormalizedTransaction(
                 network=self.network, tx_hash=tx_hash, status=TransactionStatus.NOT_FOUND
-            )
+            ), None
         self._check_tx_id(tx, tx_hash)
 
         solid_tx = self._post(GET_SOLID_TRANSACTION_PATH, tx_hash)
@@ -200,7 +298,7 @@ class TronProvider:
                 to_address=to_address,
                 native_value_atomic=native_value,
                 native_unit=NativeUnit.SUN,
-            )
+            ), None
         self._check_tx_id(solid_tx, tx_hash)
         if solid_tx.get("raw_data") != tx.get("raw_data"):
             raise MalformedResponseError("full and solidity nodes disagree on the transaction")
@@ -231,7 +329,7 @@ class TronProvider:
             native_unit=NativeUnit.SUN,
             block_number=block_number,
             block_timestamp=block_timestamp,
-        )
+        ), info
 
     def _post(self, path: str, tx_hash: str) -> dict[str, Any]:
         response = self._transport.post_json(

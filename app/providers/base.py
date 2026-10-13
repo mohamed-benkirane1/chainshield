@@ -146,6 +146,10 @@ class TransactionPendingError(ProviderError):
     """The transaction is not yet included in a block, so it has not executed."""
 
 
+class TransactionUnconfirmedError(ProviderError):
+    """The transaction is in a block but not final, so its effects are not established."""
+
+
 class ExecutionResultUnknownError(ProviderError):
     """The backend data does not establish whether execution succeeded.
 
