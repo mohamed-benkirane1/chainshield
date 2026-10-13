@@ -26,6 +26,7 @@ from app.providers.base import (
     UnsupportedTransactionError,
 )
 from app.providers.tron import TronApiError
+from app.risk.address_evidence import ConflictingReportError
 from app.services.transaction_analysis import InconsistentAnalysisError
 
 _INCONSISTENT = (
@@ -65,7 +66,13 @@ ERROR_MAPPING: tuple[tuple[type[Exception], int, str, str], ...] = (
 )
 
 _INTERNAL = (500, "internal_error", "An internal error occurred.")
-_KNOWN_FIELDS = frozenset({"kind", "network", "tx_hash"})
+_KNOWN_FIELDS = frozenset({"kind", "network", "tx_hash", "reports"})
+_CONFLICTING_REPORTS = (
+    422,
+    "conflicting_reports",
+    "Several supplied reports share the same source and report identifiers "
+    "with different content.",
+)
 
 
 def _error_response(
@@ -96,6 +103,11 @@ def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+def _conflicting_reports_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Fixed message: the conflicting identifiers are client data and are not echoed.
+    return _error_response(*_CONFLICTING_REPORTS)
+
+
 def _unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return _error_response(*_INTERNAL)
 
@@ -103,4 +115,5 @@ def _unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.add_exception_handler(ProviderError, _provider_error_handler)
+    app.add_exception_handler(ConflictingReportError, _conflicting_reports_handler)
     app.add_exception_handler(Exception, _unexpected_error_handler)

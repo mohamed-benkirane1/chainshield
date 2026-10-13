@@ -7,12 +7,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.api.assessment_schemas import TransactionAssessmentRequest, TransactionAssessmentResponse
 from app.api.schemas import ErrorResponse, TransactionInspectionResponse
 from app.domain.analysis_input import TransactionAnalysisRequest
 from app.providers.ethereum import RPC_URL_ENV_VAR as ETHEREUM_RPC_URL_ENV_VAR
 from app.providers.ethereum import EthereumProvider
 from app.providers.tron import RPC_URL_ENV_VAR as TRON_RPC_URL_ENV_VAR
 from app.providers.tron import TronProvider
+from app.risk.assessment import assess_transaction
 from app.services.transaction_analysis import (
     TransactionAnalysisService,
     UsdtTransferProvider,
@@ -48,7 +50,7 @@ def get_transaction_analysis_service() -> TransactionAnalysisService:
 _ERROR_RESPONSES = {
     status: {"model": ErrorResponse, "description": description}
     for status, description in (
-        (422, "Invalid request or unsupported transaction type."),
+        (422, "Invalid request, conflicting reports or unsupported transaction type."),
         (500, "Internal error."),
         (502, "Malformed, inconsistent or wrong-network provider data."),
         (503, "Provider not configured, unavailable or rate limited."),
@@ -74,3 +76,24 @@ def inspect_transaction(
     """
     inspection = service.inspect_transaction(request.network, request.tx_hash)
     return TransactionInspectionResponse.from_inspection(inspection)
+
+
+@router.post(
+    "/transactions/assess",
+    response_model=TransactionAssessmentResponse,
+    responses=_ERROR_RESPONSES,
+    summary="Assess a transaction against client-supplied, unverified reports",
+)
+def assess_transaction_endpoint(
+    request: TransactionAssessmentRequest,
+    service: Annotated[TransactionAnalysisService, Depends(get_transaction_analysis_service)],
+) -> TransactionAssessmentResponse:
+    """Inspect once, then match supplied reports. No score, never a fraud verdict.
+
+    ``risk_determination`` is always ``indeterminate``; ``reports`` are taken
+    as supplied and ``source_reference`` is never fetched. Synchronous for the
+    same reason as ``/transactions/inspect``.
+    """
+    inspection = service.inspect_transaction(request.network, request.tx_hash)
+    assessment = assess_transaction(inspection, request.reports)
+    return TransactionAssessmentResponse.from_domain(inspection, assessment)
