@@ -7,6 +7,10 @@ from fastapi import APIRouter, Depends
 from app.api.auth import require_api_token
 from app.api.concurrency_limit import hold_analysis_slot
 from app.api.rate_limit import SlidingWindowRateLimiter, get_rate_limiter
+from app.api.path_schemas import (
+    RelationshipPathAnalysisResponse,
+    RelationshipPathsRequest,
+)
 from app.api.relationship_schemas import (
     UsdtRelationshipGraphResponse,
     UsdtRelationshipsRequest,
@@ -14,6 +18,7 @@ from app.api.relationship_schemas import (
 from app.api.schemas import ErrorResponse
 from app.api.transactions import ANALYSIS_ERROR_RESPONSES, get_transaction_analysis_service
 from app.services.transaction_analysis import TransactionAnalysisService
+from app.services.relationship_paths import analyze_relationship_paths
 from app.services.usdt_relationships import inspect_usdt_relationships
 
 router = APIRouter(
@@ -55,3 +60,23 @@ def usdt_relationships_endpoint(
     limiter.acquire(cost=len(request.tx_hashes))
     graph = inspect_usdt_relationships(service, request.network, request.tx_hashes)
     return UsdtRelationshipGraphResponse.from_domain(graph)
+
+
+@router.post(
+    "/relationships/paths",
+    response_model=RelationshipPathAnalysisResponse,
+    responses=_RESPONSES,
+    summary="Find direct or two-hop directed USDT paths in supplied transactions",
+)
+def relationship_paths_endpoint(
+    request: RelationshipPathsRequest,
+    service: Annotated[TransactionAnalysisService, Depends(get_transaction_analysis_service)],
+    limiter: Annotated[SlidingWindowRateLimiter, Depends(get_rate_limiter)],
+) -> RelationshipPathAnalysisResponse:
+    """Inspect once, build the existing graph, then perform a pure bounded search."""
+    limiter.acquire(cost=len(request.tx_hashes))
+    graph = inspect_usdt_relationships(service, request.network, request.tx_hashes)
+    analysis = analyze_relationship_paths(
+        graph, request.source_address, request.target_address
+    )
+    return RelationshipPathAnalysisResponse.from_domain(analysis)

@@ -8,8 +8,9 @@ ChainShield est une plateforme **défensive** d'aide à l'évaluation des risque
 ## État actuel
 
 Version publiée : **v0.1.0**. ChainShield **v0.2.0 est en cours de
-développement** : l'investigation d'adresse et le graphe de relations USDT
-sont disponibles sur `main` mais pas encore publiés (le package reste en 0.1.0).
+développement** : l'investigation d'adresse, le graphe de relations USDT et
+l'analyse de chemins sont disponibles sur `main` mais pas encore publiés (le
+package reste en 0.1.0).
 
 - `GET /health` ;
 - `POST /api/v1/transactions/inspect` : lecture seule d'une transaction Ethereum
@@ -24,6 +25,9 @@ sont disponibles sur `main` mais pas encore publiés (le package reste en 0.1.0)
 - `POST /api/v1/relationships/usdt` (v0.2.0, en développement) : graphe orienté
   des événements `Transfer` USDT officiels observés dans 1 à 3 transactions
   fournies (voir [Graphe de relations USDT](#graphe-de-relations-usdt-v020-en-développement)).
+- `POST /api/v1/relationships/paths` (v0.2.0, en développement) : chemins USDT
+  orientés directs ou à deux sauts dans ce même échantillon (voir
+  [Analyse de chemins](#analyse-de-chemins-v020-en-développement)).
 
 Les signalements ne sont ni vérifiés, ni récupérés, ni enrichis :
 `source_reference` n'est jamais consulté. Une correspondance recommande
@@ -125,10 +129,10 @@ de la journalisation et d'autres protections opérationnelles.
 Les routes d'analyse partagent un quota de **30 unités par fenêtre glissante de
 60 secondes**, pour limiter les abus et la consommation des ressources RPC.
 `POST /api/v1/transactions/inspect` et `POST /api/v1/transactions/assess`
-consomment 1 unité par requête ; `POST /api/v1/addresses/investigate` et
-`POST /api/v1/relationships/usdt` consomment **1 unité par hash fourni**
-(1 à 3), en une seule admission atomique : une requête refusée ne consomme
-rien.
+consomment 1 unité par requête ; `POST /api/v1/addresses/investigate`,
+`POST /api/v1/relationships/usdt` et `POST /api/v1/relationships/paths`
+consomment **1 unité par hash fourni** (1 à 3), en une seule admission
+atomique : une requête refusée ne consomme rien.
 
 - **Quota global** : l'authentification repose sur un seul secret partagé, il
   n'y a donc pas d'identité de client. Le quota est commun à tous les clients
@@ -176,10 +180,11 @@ Limites de cette version :
 
 ## Analyses simultanées
 
-Au plus **8 analyses** (`inspect`, `assess`, `investigate` et `relationships/usdt`
-confondues) peuvent être en cours en même temps dans un processus ; une requête
-multi-transaction occupe un seul créneau pour toutes ses transactions. Une
-requête supplémentaire n'attend pas : elle est refusée immédiatement.
+Au plus **8 analyses** (`inspect`, `assess`, `investigate`, `relationships/usdt`
+et `relationships/paths` confondues) peuvent être en cours en même temps dans
+un processus ; une requête multi-transaction occupe un seul créneau pour toutes
+ses transactions. Une requête supplémentaire n'attend pas : elle est refusée
+immédiatement.
 
 ```http
 HTTP/1.1 503 Service Unavailable
@@ -336,6 +341,70 @@ que les autres analyses. Chaque hash coûte une unité du quota partagé ; les 1
 3 unités sont admises atomiquement avant tout appel provider. L'inspection est
 fail-fast : la première erreur interrompt la requête, conserve le code d'erreur
 sûr, ne renvoie aucun graphe partiel et n'inspecte pas les hashes suivants.
+
+## Analyse de chemins (v0.2.0, en développement)
+
+`POST /api/v1/relationships/paths` recherche les chemins USDT orientés entre
+deux adresses dans le graphe construit exclusivement à partir de 1 à 3
+transactions fournies. La route n'explore aucune autre transaction et
+n'introduit ni stockage ni nouveau provider.
+
+```json
+{
+  "network": "ethereum",
+  "tx_hashes": ["0x...", "0x..."],
+  "source_address": "0x...",
+  "target_address": "0x..."
+}
+```
+
+Les hashes et les deux adresses sont validés et normalisés avant tout appel
+RPC. La source et la destination doivent être distinctes. Les champs
+supplémentaires et les hashes dupliqués après normalisation sont refusés en
+`422`, sans consommation de quota.
+
+Deux formes seulement sont recherchées :
+
+- chemin direct : `A -> C` (`hop_count: 1`) ;
+- chemin à deux sauts : `A -> B -> C` (`hop_count: 2`), avec `B` distinct de
+  `A` et `C`.
+
+La connectivité utilise les relations orientées agrégées du graphe existant,
+pas les produits cartésiens des événements. Chaque `leg` restitue le couple
+orienté, le nombre d'événements, leur somme atomique exacte, les transactions
+distinctes et **tous** les `event_ids` des arêtes observées correspondantes.
+Les montants sont des chaînes décimales exactes dans l'API et restent propres à
+chaque leg : aucun montant de bout en bout, netting ou solde n'est calculé.
+
+L'ordre est déterministe : le chemin direct vient en premier, puis les chemins
+à deux sauts par adresse intermédiaire canonique croissante. Au maximum 50
+chemins sont renvoyés. `observed_path_count` conserve le nombre total de chemins
+observables calculé sur les relations agrégées et `truncated: true` indique que
+des résultats supplémentaires existent.
+
+Interprétation de `connection_status` :
+
+- `path_observed` : au moins un chemin existe dans les données connues ;
+- `no_path_observed_in_supplied_transactions` : couverture `complete`, aucun
+  chemin dans l'échantillon fourni ;
+- `no_path_observed_in_known_data` : couverture `partial`, aucun chemin dans
+  la partie connue ;
+- `connectivity_unknown` : couverture `none`, donc `paths` et
+  `observed_path_count` valent `null`.
+
+Avec une couverture partielle, les chemins observés restent exploitables mais
+leur liste peut être incomplète. Une liste vide ne démontre jamais l'absence de
+relation hors de l'échantillon. Un chemin à deux sauts est seulement une
+propriété topologique : l'ordre des hashes n'est pas interprété comme une
+chronologie, les deux legs ne prouvent pas la circulation des mêmes fonds et
+aucune causalité, propriété commune, relation de contrôle ou fraude n'est
+inférée.
+
+La route partage le Bearer token, la limite de corps, les huit créneaux de
+concurrence et le quota global des autres analyses. Chaque hash coûte une unité,
+admise atomiquement avant tout RPC. Une erreur d'inspection interrompt
+immédiatement le traitement sans résultat partiel ni inspection des hashes
+suivants.
 
 ## Sémantique des statuts et limites blockchain
 
