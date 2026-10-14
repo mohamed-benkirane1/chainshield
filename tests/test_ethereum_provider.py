@@ -633,7 +633,7 @@ def test_urllib_transport_identifies_itself_as_chainshield() -> None:
     transport.post_json(RPC_URL, {"method": "eth_chainId"}, 3.0)
 
     request, _ = opener.requests[0]
-    assert request.get_header("User-agent") == "ChainShield/0.1.0"
+    assert request.get_header("User-agent") == "ChainShield/0.2.0"
 
 
 @pytest.mark.parametrize(

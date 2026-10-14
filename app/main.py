@@ -9,7 +9,7 @@ from app.api.transactions import router as transactions_router
 
 app = FastAPI(
     title="ChainShield",
-    version="0.1.0",
+    version="0.2.0",
     description=(
         "Defensive crypto-scam risk assessment. Results are decision-support "
         "indicators, never proof of fraud."

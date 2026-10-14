@@ -1,4 +1,4 @@
-"""USDT relationship graph endpoint (ChainShield v0.2.0, in development)."""
+"""USDT relationship graph endpoint (ChainShield v0.2.0)."""
 
 from typing import Annotated
 

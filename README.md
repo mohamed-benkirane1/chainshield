@@ -7,10 +7,10 @@ ChainShield est une plateforme **défensive** d'aide à l'évaluation des risque
 
 ## État actuel
 
-Version publiée : **v0.1.0**. ChainShield **v0.2.0 est en cours de
-développement** : l'investigation d'adresse, le graphe de relations USDT,
-l'analyse de chemins et le dossier multi-adresses sont disponibles sur `main`
-mais pas encore publiés (le package reste en 0.1.0).
+Version actuelle : **v0.2.0**, publiée comme backend de développement.
+Elle réunit l'inspection et l'évaluation de transactions, l'investigation
+d'adresse, le graphe de relations USDT, l'analyse de chemins et le dossier
+multi-adresses. La version publiée précédente est **v0.1.0**.
 
 - `GET /health` ;
 - `POST /api/v1/transactions/inspect` : lecture seule d'une transaction Ethereum
@@ -19,18 +19,18 @@ mais pas encore publiés (le package reste en 0.1.0).
 - `POST /api/v1/transactions/assess` : même inspection, plus des caractéristiques
   factuelles et le rapprochement avec des signalements d'adresses **fournis par
   le client** (50 au maximum par requête).
-- `POST /api/v1/addresses/investigate` (v0.2.0, en développement) : synthèse
+- `POST /api/v1/addresses/investigate` (v0.2.0) : synthèse
   factuelle de l'activité observée d'une adresse dans 1 à 3 transactions
-  fournies (voir [Investigation d'adresse](#investigation-dadresse-v020-en-développement)).
-- `POST /api/v1/relationships/usdt` (v0.2.0, en développement) : graphe orienté
+  fournies (voir [Investigation d'adresse](#investigation-dadresse-v020)).
+- `POST /api/v1/relationships/usdt` (v0.2.0) : graphe orienté
   des événements `Transfer` USDT officiels observés dans 1 à 3 transactions
-  fournies (voir [Graphe de relations USDT](#graphe-de-relations-usdt-v020-en-développement)).
-- `POST /api/v1/relationships/paths` (v0.2.0, en développement) : chemins USDT
+  fournies (voir [Graphe de relations USDT](#graphe-de-relations-usdt-v020)).
+- `POST /api/v1/relationships/paths` (v0.2.0) : chemins USDT
   orientés directs ou à deux sauts dans ce même échantillon (voir
-  [Analyse de chemins](#analyse-de-chemins-v020-en-développement)).
-- `POST /api/v1/investigations/dossier` (v0.2.0, en développement) : dossier
+  [Analyse de chemins](#analyse-de-chemins-v020)).
+- `POST /api/v1/investigations/dossier` (v0.2.0) : dossier
   factuel partagé pour 2 à 5 adresses et 1 à 3 transactions fournies (voir
-  [Dossier multi-adresses](#dossier-multi-adresses-v020-en-développement)).
+  [Dossier multi-adresses](#dossier-multi-adresses-v020)).
 
 Les signalements ne sont ni vérifiés, ni récupérés, ni enrichis :
 `source_reference` n'est jamais consulté. Une correspondance recommande
@@ -220,7 +220,7 @@ Limites :
 - ce n'est ni une garantie de disponibilité ni une préparation à une exposition
   sur Internet.
 
-## Investigation d'adresse (v0.2.0, en développement)
+## Investigation d'adresse (v0.2.0)
 
 `POST /api/v1/addresses/investigate` résume l'activité **observée** d'une
 adresse dans un échantillon de 1 à 3 transactions **fournies par l'analyste**,
@@ -276,7 +276,7 @@ provider, données incohérentes...), toute l'investigation échoue avec l'erreu
 sûre correspondante. Aucun résultat partiel n'est renvoyé, et les transactions
 suivantes ne sont pas inspectées.
 
-## Graphe de relations USDT (v0.2.0, en développement)
+## Graphe de relations USDT (v0.2.0)
 
 `POST /api/v1/relationships/usdt` construit un graphe factuel à partir de 1 à
 3 transactions Ethereum ou TRON **fournies par l'analyste**. Il réutilise les
@@ -346,7 +346,7 @@ que les autres analyses. Chaque hash coûte une unité du quota partagé ; les 1
 fail-fast : la première erreur interrompt la requête, conserve le code d'erreur
 sûr, ne renvoie aucun graphe partiel et n'inspecte pas les hashes suivants.
 
-## Analyse de chemins (v0.2.0, en développement)
+## Analyse de chemins (v0.2.0)
 
 `POST /api/v1/relationships/paths` recherche les chemins USDT orientés entre
 deux adresses dans le graphe construit exclusivement à partir de 1 à 3
@@ -410,7 +410,7 @@ admise atomiquement avant tout RPC. Une erreur d'inspection interrompt
 immédiatement le traitement sans résultat partiel ni inspection des hashes
 suivants.
 
-## Dossier multi-adresses (v0.2.0, en développement)
+## Dossier multi-adresses (v0.2.0)
 
 `POST /api/v1/investigations/dossier` produit un dossier factuel pour 2 à 5
 adresses et 1 à 3 transactions Ethereum ou TRON fournies par l'analyste.

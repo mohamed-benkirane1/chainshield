@@ -1,4 +1,4 @@
-"""Multi-address investigation dossier endpoint (v0.2.0, in development)."""
+"""Multi-address investigation dossier endpoint (ChainShield v0.2.0)."""
 
 from typing import Annotated
 
