@@ -51,6 +51,7 @@ _ERROR_RESPONSES = {
     status: {"model": ErrorResponse, "description": description}
     for status, description in (
         (422, "Invalid request, conflicting reports or unsupported transaction type."),
+        (413, "Request body exceeds 262144 bytes (operational limit)."),
         (500, "Internal error."),
         (502, "Malformed, inconsistent or wrong-network provider data."),
         (503, "Provider not configured, unavailable or rate limited."),

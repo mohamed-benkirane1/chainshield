@@ -22,6 +22,10 @@ les autres participants. Aucun score n'est calculé, `risk_determination` reste
 toujours `indeterminate`, et l'absence de correspondance ne signifie jamais
 qu'une transaction est sûre.
 
+Le corps de chaque requête est limité à 256 Kio (262 144 octets, comptés à la
+réception) : au-delà, la réponse est `413 request_too_large`, avant tout
+traitement. C'est une limite opérationnelle, pas un seuil de risque.
+
 Cette API est une interface de développement uniquement : pas encore
 d'authentification, de rate limiting ni de stockage. Elle ne doit pas être
 exposée publiquement en l'état.

@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.body_limit import BodySizeLimitMiddleware
 from app.api.errors import register_error_handlers
 from app.api.transactions import router as transactions_router
 
@@ -12,6 +13,8 @@ app = FastAPI(
     ),
 )
 register_error_handlers(app)
+# Oversized bodies are rejected before routing, so no route or dependency runs.
+app.add_middleware(BodySizeLimitMiddleware)
 app.include_router(transactions_router, prefix="/api/v1")
 
 
