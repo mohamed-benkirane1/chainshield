@@ -8,9 +8,9 @@ ChainShield est une plateforme **défensive** d'aide à l'évaluation des risque
 ## État actuel
 
 Version publiée : **v0.1.0**. ChainShield **v0.2.0 est en cours de
-développement** : l'investigation d'adresse, le graphe de relations USDT et
-l'analyse de chemins sont disponibles sur `main` mais pas encore publiés (le
-package reste en 0.1.0).
+développement** : l'investigation d'adresse, le graphe de relations USDT,
+l'analyse de chemins et le dossier multi-adresses sont disponibles sur `main`
+mais pas encore publiés (le package reste en 0.1.0).
 
 - `GET /health` ;
 - `POST /api/v1/transactions/inspect` : lecture seule d'une transaction Ethereum
@@ -28,6 +28,9 @@ package reste en 0.1.0).
 - `POST /api/v1/relationships/paths` (v0.2.0, en développement) : chemins USDT
   orientés directs ou à deux sauts dans ce même échantillon (voir
   [Analyse de chemins](#analyse-de-chemins-v020-en-développement)).
+- `POST /api/v1/investigations/dossier` (v0.2.0, en développement) : dossier
+  factuel partagé pour 2 à 5 adresses et 1 à 3 transactions fournies (voir
+  [Dossier multi-adresses](#dossier-multi-adresses-v020-en-développement)).
 
 Les signalements ne sont ni vérifiés, ni récupérés, ni enrichis :
 `source_reference` n'est jamais consulté. Une correspondance recommande
@@ -130,9 +133,10 @@ Les routes d'analyse partagent un quota de **30 unités par fenêtre glissante d
 60 secondes**, pour limiter les abus et la consommation des ressources RPC.
 `POST /api/v1/transactions/inspect` et `POST /api/v1/transactions/assess`
 consomment 1 unité par requête ; `POST /api/v1/addresses/investigate`,
-`POST /api/v1/relationships/usdt` et `POST /api/v1/relationships/paths`
-consomment **1 unité par hash fourni** (1 à 3), en une seule admission
-atomique : une requête refusée ne consomme rien.
+`POST /api/v1/relationships/usdt`, `POST /api/v1/relationships/paths` et
+`POST /api/v1/investigations/dossier` consomment **1 unité par hash fourni**
+(1 à 3), en une seule admission atomique : une requête refusée ne consomme
+rien. Le nombre d'adresses du dossier ne change pas ce coût.
 
 - **Quota global** : l'authentification repose sur un seul secret partagé, il
   n'y a donc pas d'identité de client. Le quota est commun à tous les clients
@@ -180,11 +184,11 @@ Limites de cette version :
 
 ## Analyses simultanées
 
-Au plus **8 analyses** (`inspect`, `assess`, `investigate`, `relationships/usdt`
-et `relationships/paths` confondues) peuvent être en cours en même temps dans
-un processus ; une requête multi-transaction occupe un seul créneau pour toutes
-ses transactions. Une requête supplémentaire n'attend pas : elle est refusée
-immédiatement.
+Au plus **8 analyses** (`inspect`, `assess`, `investigate`, `relationships/usdt`,
+`relationships/paths` et `investigations/dossier` confondues) peuvent être en
+cours en même temps dans un processus ; une requête multi-transaction occupe un
+seul créneau pour toutes ses transactions. Une requête supplémentaire n'attend
+pas : elle est refusée immédiatement.
 
 ```http
 HTTP/1.1 503 Service Unavailable
@@ -405,6 +409,65 @@ concurrence et le quota global des autres analyses. Chaque hash coûte une unit�
 admise atomiquement avant tout RPC. Une erreur d'inspection interrompt
 immédiatement le traitement sans résultat partiel ni inspection des hashes
 suivants.
+
+## Dossier multi-adresses (v0.2.0, en développement)
+
+`POST /api/v1/investigations/dossier` produit un dossier factuel pour 2 à 5
+adresses et 1 à 3 transactions Ethereum ou TRON fournies par l'analyste.
+
+```json
+{
+  "network": "ethereum",
+  "addresses": ["0x...", "0x...", "0x..."],
+  "tx_hashes": ["0x...", "0x..."]
+}
+```
+
+Les adresses et hashes sont validés, normalisés et dédupliqués avant tout appel
+RPC. Chaque transaction est inspectée **exactement une fois**, quel que soit le
+nombre d'adresses. Les mêmes résultats d'inspection sont ensuite transmis aux
+constructeurs existants d'investigation d'adresse et de graphe USDT. Il s'agit
+d'un snapshot applicatif partagé, pas d'une affirmation de snapshot blockchain
+atomique.
+
+La réponse conserve l'ordre fourni pour `addresses` et `address_findings`, et
+contient :
+
+- le statut et la disponibilité des événements USDT de chaque transaction ;
+- pour chaque adresse, sa présence, ses rôles natifs et USDT par transaction,
+  ainsi que le résumé exact déjà utilisé par l'investigation mono-adresse ;
+- `selected_address_relationships`, uniquement pour les relations USDT dont
+  l'expéditeur **et** le destinataire appartiennent à la sélection ;
+- `observed_selected_relationship_count`, nombre de couples orientés connus.
+
+Les relations sélectionnées sont triées par `(from_address, to_address)`.
+Chaque relation fournit le nombre d'événements, leur somme atomique exacte, les
+hashes distincts et tous les `event_ids` du graphe. `A -> B` et `B -> A` restent
+distinctes. Une boucle `A -> A` est conservée avec `self_transfer: true`.
+Aucun événement n'est fusionné, aucun netting ou paiement économique
+dédupliqué n'est calculé. Une contrepartie externe peut apparaître dans le
+résumé individuel d'une adresse sans être incluse dans les relations
+sélectionnées.
+
+`transfer_coverage` garde la sémantique commune :
+
+- `complete` : toutes les données de transfert sont connues ; aucune relation
+  observée donne `selected_address_relationships: []` et un compteur `0` ;
+- `partial` : seules les relations de la partie connue sont rapportées et une
+  collection vide ne prouve pas l'absence réelle de relation ;
+- `none` : relations et compteur valent `null`, tout comme les agrégats USDT
+  individuels indisponibles.
+
+`not_found` ne prouve jamais qu'une transaction n'existe pas et
+`not_observed` signifie seulement que l'adresse est absente des champs
+inspectables. Le dossier n'explore aucun historique, n'appelle pas l'endpoint
+de chemins et n'infère ni propriétaire, ni classement, ni score, ni fraude.
+
+La route réutilise le Bearer token, la limite de corps et le limiteur de
+concurrence communs. Le quota global coûte une unité par hash — jamais par
+adresse — avec une admission atomique avant le premier RPC. La première erreur
+provider interrompt l'ensemble du dossier sans résultat partiel ni inspection
+des hashes suivants.
 
 ## Sémantique des statuts et limites blockchain
 

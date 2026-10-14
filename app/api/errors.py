@@ -76,6 +76,7 @@ _KNOWN_FIELDS = frozenset(
         "tx_hash",
         "reports",
         "address",
+        "addresses",
         "tx_hashes",
         "source_address",
         "target_address",
