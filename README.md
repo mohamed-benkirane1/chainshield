@@ -195,6 +195,51 @@ Limites :
 - ce n'est ni une garantie de disponibilité ni une préparation à une exposition
   sur Internet.
 
+## Sémantique des statuts et limites blockchain
+
+`transaction.status` décrit ce que le nœud interrogé permet d'établir, rien de
+plus :
+
+| Statut | Réseau | Signification |
+|---|---|---|
+| `success` | Ethereum | Transaction minée avec un reçu indiquant une exécution réussie. Ce n'est **pas** une finalité de consensus : une réorganisation reste théoriquement possible. |
+| `success` | TRON | Transaction solidifiée dont l'exécution a réussi. |
+| `reverted` | Ethereum, TRON | Échec d'exécution établi par les données accessibles (reçu Ethereum, résultat d'une transaction TRON solidifiée). Aucun transfert USDT n'est alors rapporté. |
+| `pending` | Ethereum | Transaction connue du nœud mais pas encore incluse dans un bloc. |
+| `unconfirmed` | TRON | Transaction incluse dans un bloc mais pas encore solidifiée : son résultat d'exécution n'est pas rapporté. |
+| `not_found` | Ethereum, TRON | Le nœud interrogé ne connaît pas la transaction. Cela ne prouve pas qu'elle n'existe pas. |
+
+- Pour `pending`, `unconfirmed` et `not_found`, `usdt_transfers` vaut `null`
+  (inconnu), jamais `[]`.
+- Un nœud à historique ou à index de transactions limité peut ne pas retrouver
+  certaines transactions anciennes et répondre `not_found`.
+- Sur TRON, une transaction pas encore incluse dans un bloc apparaît
+  `not_found` plutôt que `pending`.
+- Quand le résultat d'exécution n'est pas disponible ou pas établi, ChainShield
+  ne le devine pas : il répond par une erreur (`503 receipt_unavailable` si les
+  données d'exécution manquent, `502 execution_result_unknown` ou
+  `502 provider_malformed_response` si elles sont incomplètes ou incohérentes).
+- Le réseau Ethereum est contrôlé (`eth_chainId` doit valoir 1). En revanche,
+  ChainShield ne vérifie pas cryptographiquement que l'endpoint TRON configuré
+  sert le mainnet : c'est la responsabilité de l'opérateur.
+- L'absence de signal de risque ne signifie jamais qu'une transaction est sûre.
+
+## Limites des fournisseurs RPC
+
+- Certains fournisseurs RPC Ethereum, en particulier des endpoints publics
+  répartis sur plusieurs nœuds, peuvent ponctuellement renvoyer un reçu
+  indisponible pour une transaction minée : la réponse est alors
+  `503 receipt_unavailable`, et une nouvelle tentative ultérieure peut réussir.
+- TronGrid peut appliquer des restrictions importantes aux requêtes sans clé
+  API (réponse `503 provider_unavailable`). Une clé, fournie via
+  `CHAINSHIELD_TRON_API_KEY`, est recommandée pour un usage fiable.
+- Aucune nouvelle tentative automatique n'est implémentée.
+- Chaque opération RPC a un timeout de 10 secondes, mais une analyse enchaîne
+  plusieurs opérations (jusqu'à 9 par transaction) : sa durée totale peut donc
+  dépasser ce timeout.
+- Ces comportements dépendent du fournisseur choisi et peuvent évoluer. Le
+  projet n'est pas prêt pour une exposition publique sur Internet.
+
 ## Tests
 
 ```powershell
