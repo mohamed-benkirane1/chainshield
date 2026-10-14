@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.assessment_schemas import TransactionAssessmentRequest, TransactionAssessmentResponse
 from app.api.auth import require_api_token
+from app.api.concurrency_limit import hold_analysis_slot
 from app.api.rate_limit import enforce_rate_limit
 from app.api.schemas import ErrorResponse, TransactionInspectionResponse
 from app.domain.analysis_input import TransactionAnalysisRequest
@@ -23,11 +24,16 @@ from app.services.transaction_analysis import (
 )
 
 # Router dependencies run in this order, before the service dependency:
-# authentication, then the shared rate limit. A request rejected by either
-# never builds or calls the service, and only authenticated ones use quota.
+# authentication, then a concurrent-analysis slot (held until the response is
+# built), then the shared rate limit. A request rejected by any of them never
+# builds or calls the service; one refused for lack of a slot uses no quota.
 router = APIRouter(
     tags=["transactions"],
-    dependencies=[Depends(require_api_token), Depends(enforce_rate_limit)],
+    dependencies=[
+        Depends(require_api_token),
+        Depends(hold_analysis_slot, scope="function"),
+        Depends(enforce_rate_limit),
+    ],
 )
 
 
@@ -64,7 +70,11 @@ _ERROR_RESPONSES = {
         (429, "Shared quota of 30 requests per 60 seconds exceeded; see Retry-After."),
         (500, "Internal error."),
         (502, "Malformed, inconsistent or wrong-network provider data."),
-        (503, "Auth or provider not configured, provider unavailable or rate limited."),
+        (
+            503,
+            "Auth or provider not configured, provider unavailable or rate limited, "
+            "or analysis capacity busy (service_busy, see Retry-After).",
+        ),
         (504, "Provider timeout."),
     )
 }

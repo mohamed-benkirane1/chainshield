@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.auth import AuthenticationError, AuthenticationNotConfiguredError
+from app.api.concurrency_limit import AnalysisCapacityExceededError
 from app.api.rate_limit import RateLimitExceededError
 from app.api.schemas import ErrorBody, ErrorDetail, ErrorResponse
 from app.providers.base import (
@@ -78,6 +79,7 @@ _CONFLICTING_REPORTS = (
 _UNAUTHORIZED = (401, "unauthorized", "Authentication required.")
 _AUTH_NOT_CONFIGURED = (503, "auth_not_configured", "API authentication is not configured.")
 _RATE_LIMITED = (429, "rate_limited", "Too many requests. Retry later.")
+_SERVICE_BUSY = (503, "service_busy", "Analysis capacity is temporarily exhausted.")
 
 
 def _error_response(
@@ -132,6 +134,13 @@ def _rate_limited_handler(request: Request, exc: Exception) -> JSONResponse:
     return response
 
 
+def _service_busy_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Fixed body and delay: nothing about the slots in use is exposed.
+    response = _error_response(*_SERVICE_BUSY)
+    response.headers["Retry-After"] = "1"
+    return response
+
+
 def _unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return _error_response(*_INTERNAL)
 
@@ -141,6 +150,7 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AuthenticationError, _authentication_error_handler)
     app.add_exception_handler(AuthenticationNotConfiguredError, _auth_not_configured_handler)
     app.add_exception_handler(RateLimitExceededError, _rate_limited_handler)
+    app.add_exception_handler(AnalysisCapacityExceededError, _service_busy_handler)
     app.add_exception_handler(ProviderError, _provider_error_handler)
     app.add_exception_handler(ConflictingReportError, _conflicting_reports_handler)
     app.add_exception_handler(Exception, _unexpected_error_handler)

@@ -122,10 +122,11 @@ limiter les abus et la consommation des ressources RPC.
 - **Fenêtre glissante** : une requête admise à l'instant `t` compte jusqu'à
   `t + 60 s` exactement ; il n'y a pas de remise à zéro à heure fixe.
 - **Ordre** : limite de taille du corps (`413`), puis authentification (`401`
-  ou `503 auth_not_configured`), puis quota (`429`), puis traitement. Les
-  requêtes rejetées avant le quota n'en consomment pas. Une requête admise
-  consomme une unité même si elle échoue ensuite (validation `422` d'un JSON
-  bien formé, erreur provider, etc.).
+  ou `503 auth_not_configured`), puis créneau d'analyse (`503 service_busy`,
+  voir [Analyses simultanées](#analyses-simultanées)), puis quota (`429`), puis
+  traitement. Les requêtes rejetées avant le quota n'en consomment pas. Une
+  requête admise consomme une unité même si elle échoue ensuite (validation
+  `422` d'un JSON bien formé, erreur provider, etc.).
 - Un JSON syntaxiquement invalide est rejeté en `422` par FastAPI avant
   l'authentification et le quota : il ne consomme pas de quota et n'est pas
   limité, mais aucun traitement métier ni appel provider ne s'exécute.
@@ -153,10 +154,46 @@ Limites de cette version :
   pris en compte, et il n'y a pas de quota par IP ;
 - un déploiement distribué nécessite un rate limiter centralisé ou une API
   gateway correctement configurée ;
-- ce n'est pas une limite du nombre de requêtes exécutées simultanément : jusqu'à
-  30 requêtes admises peuvent être en cours en même temps ;
+- le quota ne limite pas à lui seul les requêtes exécutées simultanément : c'est
+  le rôle de la limite d'[analyses simultanées](#analyses-simultanées) ;
 - l'API n'est toujours pas prête pour une exposition publique sur Internet sans
   protections complémentaires (HTTPS, gateway, supervision, etc.).
+
+## Analyses simultanées
+
+Au plus **8 analyses** (`inspect` et `assess` confondues) peuvent être en cours
+en même temps dans un processus. Une requête supplémentaire n'attend pas : elle
+est refusée immédiatement.
+
+```http
+HTTP/1.1 503 Service Unavailable
+Retry-After: 1
+
+{"error": {"code": "service_busy", "message": "Analysis capacity is temporarily exhausted."}}
+```
+
+- Ce `503 service_busy` est distinct de `auth_not_configured`,
+  `provider_not_configured` et `provider_unavailable` ; le `429` du quota est
+  inchangé.
+- Le créneau est pris après l'authentification et avant le quota : une requête
+  refusée pour surcharge ne consomme pas de quota, et une requête non
+  authentifiée (`401`) ou trop volumineuse (`413`) ne prend aucun créneau.
+- Il est conservé pendant tout le traitement (quota, service, providers, Risk
+  Engine, sérialisation de la réponse), puis toujours libéré : succès, erreur
+  de validation, erreur provider, exception ou annulation.
+- Un JSON syntaxiquement invalide est rejeté en `422` avant toute admission.
+
+Limites :
+
+- protection **par processus uniquement**, en mémoire : aucune limite globale
+  entre plusieurs workers (`uvicorn --workers N` autorise `8 × N` analyses) ou
+  instances, et aucune protection distribuée ;
+- pas de contrôle de concurrence propre à chaque provider (Ethereum, TRON) ni
+  au nombre d'appels RPC émis par une analyse ;
+- la sûreté des transports HTTP partagés par les providers lors d'appels
+  simultanés n'est pas garantie sans audit supplémentaire ;
+- ce n'est ni une garantie de disponibilité ni une préparation à une exposition
+  sur Internet.
 
 ## Tests
 
