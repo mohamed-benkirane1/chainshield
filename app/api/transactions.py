@@ -61,7 +61,7 @@ def get_transaction_analysis_service() -> TransactionAnalysisService:
     return build_transaction_analysis_service()
 
 
-# Shared by every analysis route (also /addresses/investigate).
+# Shared by every analysis route, including the two weighted multi-hash routes.
 ANALYSIS_ERROR_RESPONSES = {
     status: {"model": ErrorResponse, "description": description}
     for status, description in (

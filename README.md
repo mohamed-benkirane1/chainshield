@@ -8,8 +8,8 @@ ChainShield est une plateforme **défensive** d'aide à l'évaluation des risque
 ## État actuel
 
 Version publiée : **v0.1.0**. ChainShield **v0.2.0 est en cours de
-développement** : sa première unité, l'investigation d'adresse, est disponible
-sur `main` mais pas encore publiée (le package reste en 0.1.0).
+développement** : l'investigation d'adresse et le graphe de relations USDT
+sont disponibles sur `main` mais pas encore publiés (le package reste en 0.1.0).
 
 - `GET /health` ;
 - `POST /api/v1/transactions/inspect` : lecture seule d'une transaction Ethereum
@@ -21,6 +21,9 @@ sur `main` mais pas encore publiée (le package reste en 0.1.0).
 - `POST /api/v1/addresses/investigate` (v0.2.0, en développement) : synthèse
   factuelle de l'activité observée d'une adresse dans 1 à 3 transactions
   fournies (voir [Investigation d'adresse](#investigation-dadresse-v020-en-développement)).
+- `POST /api/v1/relationships/usdt` (v0.2.0, en développement) : graphe orienté
+  des événements `Transfer` USDT officiels observés dans 1 à 3 transactions
+  fournies (voir [Graphe de relations USDT](#graphe-de-relations-usdt-v020-en-développement)).
 
 Les signalements ne sont ni vérifiés, ni récupérés, ni enrichis :
 `source_reference` n'est jamais consulté. Une correspondance recommande
@@ -46,7 +49,7 @@ doit pas être exposée publiquement en l'état.
 
 - NLP FR / AR / EN ;
 - modèles de ML ;
-- analyse de graphes ;
+- exploration automatique de graphes blockchain ;
 - dashboard analyste.
 
 ## Prérequis
@@ -122,9 +125,10 @@ de la journalisation et d'autres protections opérationnelles.
 Les routes d'analyse partagent un quota de **30 unités par fenêtre glissante de
 60 secondes**, pour limiter les abus et la consommation des ressources RPC.
 `POST /api/v1/transactions/inspect` et `POST /api/v1/transactions/assess`
-consomment 1 unité par requête ; `POST /api/v1/addresses/investigate` consomme
-**1 unité par hash fourni** (1 à 3), en une seule admission atomique : une
-requête refusée ne consomme rien.
+consomment 1 unité par requête ; `POST /api/v1/addresses/investigate` et
+`POST /api/v1/relationships/usdt` consomment **1 unité par hash fourni**
+(1 à 3), en une seule admission atomique : une requête refusée ne consomme
+rien.
 
 - **Quota global** : l'authentification repose sur un seul secret partagé, il
   n'y a donc pas d'identité de client. Le quota est commun à tous les clients
@@ -136,11 +140,11 @@ requête refusée ne consomme rien.
   ou `503 auth_not_configured`), puis créneau d'analyse (`503 service_busy`,
   voir [Analyses simultanées](#analyses-simultanées)), puis quota (`429`), puis
   traitement. Les requêtes rejetées avant le quota n'en consomment pas. Une
-  requête admise consomme une unité même si elle échoue ensuite (validation
-  `422` d'un JSON bien formé, erreur provider, etc.).
-- Un JSON syntaxiquement invalide est rejeté en `422` par FastAPI avant
-  l'authentification et le quota : il ne consomme pas de quota et n'est pas
-  limité, mais aucun traitement métier ni appel provider ne s'exécute.
+  admission consommée reste comptée si le traitement échoue ensuite (par
+  exemple sur une erreur provider).
+- Une requête invalide (JSON mal formé ou non conforme au schéma) est rejetée
+  en `422` par FastAPI avant l'authentification et le quota : elle ne consomme
+  pas de quota, et aucun traitement métier ni appel provider ne s'exécute.
 - **Réponse** au-delà du quota :
 
   ```http
@@ -172,10 +176,10 @@ Limites de cette version :
 
 ## Analyses simultanées
 
-Au plus **8 analyses** (`inspect`, `assess` et `investigate` confondues) peuvent
-être en cours en même temps dans un processus ; une investigation occupe un seul
-créneau pour toutes ses transactions. Une requête supplémentaire n'attend pas :
-elle est refusée immédiatement.
+Au plus **8 analyses** (`inspect`, `assess`, `investigate` et `relationships/usdt`
+confondues) peuvent être en cours en même temps dans un processus ; une requête
+multi-transaction occupe un seul créneau pour toutes ses transactions. Une
+requête supplémentaire n'attend pas : elle est refusée immédiatement.
 
 ```http
 HTTP/1.1 503 Service Unavailable
@@ -262,6 +266,76 @@ provider.
 provider, données incohérentes...), toute l'investigation échoue avec l'erreur
 sûre correspondante. Aucun résultat partiel n'est renvoyé, et les transactions
 suivantes ne sont pas inspectées.
+
+## Graphe de relations USDT (v0.2.0, en développement)
+
+`POST /api/v1/relationships/usdt` construit un graphe factuel à partir de 1 à
+3 transactions Ethereum ou TRON **fournies par l'analyste**. Il réutilise les
+inspections et décodeurs existants : aucun historique de wallet n'est exploré,
+aucun propriétaire ou contrôle commun n'est inféré, et aucun score, solde,
+verdict de fraude ou lien causal entre transactions n'est calculé.
+
+```json
+{
+  "network": "ethereum",
+  "tx_hashes": ["0x...", "0x..."]
+}
+```
+
+Le réseau et tous les hashes sont validés avant le premier appel RPC. Les
+hashes sont normalisés en minuscules et les doublons sont refusés après cette
+normalisation. Les champs supplémentaires sont interdits. Une entrée invalide
+est rejetée en `422`, sans appel provider ni consommation de quota.
+
+La réponse contient :
+
+- `sample_scope: "supplied_transactions_only"`, qui borne explicitement les
+  résultats aux seules transactions fournies ;
+- `transactions`, dans l'ordre de la requête, avec le hash, le statut,
+  `transfer_data_available` et `usdt_event_count` ;
+- `nodes`, les adresses canoniques distinctes qui sont l'émetteur ou le
+  destinataire d'au moins un événement connu, triées lexicographiquement ;
+- `edges`, les événements individuels dans l'ordre des transactions puis dans
+  l'ordre des transferts USDT. Chaque arête orientée `from_address ->
+  to_address` conserve `event_id`, le réseau, le hash, `event_position`, le
+  vrai `log_index` Ethereum (`null` sur TRON), les deux adresses,
+  `amount_atomic` et le contrat USDT officiel ;
+- `grouped_relationships`, trié par `from_address` puis `to_address`, qui
+  fournit pour chaque couple orienté le nombre d'événements, leur somme exacte
+  et les transactions distinctes concernées, dans l'ordre fourni ;
+- `known_total_usdt_amount_atomic`, somme exacte des montants des arêtes dont
+  les données sont connues.
+
+`event_id` est déterministe :
+`<network>:<transaction_hash>:<event_position>`. La position, indexée à partir
+de zéro, est celle de l'événement dans la liste ordonnée des transferts USDT de
+la transaction. Sur Ethereum, le vrai `log_index` est conservé séparément. Sur
+TRON, aucun `log_index` blockchain n'est inventé. Deux événements ayant les
+mêmes adresses et le même montant gardent des identifiants et des arêtes
+distincts. Un self-transfer reste une boucle `A -> A`.
+
+Les relations sont **orientées** : `A -> B` et `B -> A` ne sont jamais
+fusionnées. Aucun netting n'est effectué et les arêtes sous-jacentes restent
+présentes pour l'audit. Tous les montants sont des chaînes d'entiers décimaux
+exactes dans le JSON, sans `float`; une somme agrégée peut dépasser `uint256`.
+Les agrégats décrivent uniquement les événements observés. En particulier, les
+événements successifs d'un appel via un routeur ne prouvent pas l'existence de
+plusieurs paiements économiques indépendants.
+
+`transfer_coverage` vaut `complete`, `partial` ou `none`. Pour une transaction
+`pending`, `unconfirmed` ou `not_found`, le nombre d'événements est `null` :
+l'inconnu n'est jamais présenté comme zéro et aucune fausse arête n'est créée.
+En couverture partielle, les données connues restent disponibles. Si aucune
+transaction n'a de données USDT connues, `nodes`, `edges`,
+`grouped_relationships` et le total connu valent `null`. Si toutes les
+transactions sont finales et sans événement, la couverture est `complete`,
+les trois collections valent `[]` et le total vaut `"0"`.
+
+La route exige le même Bearer token et partage le même limiteur de concurrence
+que les autres analyses. Chaque hash coûte une unité du quota partagé ; les 1 à
+3 unités sont admises atomiquement avant tout appel provider. L'inspection est
+fail-fast : la première erreur interrompt la requête, conserve le code d'erreur
+sûr, ne renvoie aucun graphe partiel et n'inspecte pas les hashes suivants.
 
 ## Sémantique des statuts et limites blockchain
 

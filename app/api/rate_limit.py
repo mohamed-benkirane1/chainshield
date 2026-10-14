@@ -2,7 +2,7 @@
 
 Authentication v1 relies on one shared secret, so there is no client identity
 to key a quota on: a single quota, per process, is shared by every
-authenticated caller and by both analysis routes. Client headers such as
+authenticated caller and by every analysis route. Client headers such as
 ``X-Forwarded-For`` or ``Forwarded`` are never read.
 
 Sliding-window log: the monotonic timestamps of the admissions of the last
