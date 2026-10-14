@@ -38,6 +38,8 @@ from app.services.transaction_analysis import (
 
 URL = "/api/v1/transactions/inspect"
 SECRET = "sk-test-0123456789abcdef"
+API_TOKEN = "fictional-test-token-not-a-secret-0123456789"  # test value only
+AUTH = {"Authorization": f"Bearer {API_TOKEN}"}
 
 ETH_HASH = "0x" + "ab" * 32
 TRON_HASH = "cd" * 32
@@ -79,6 +81,7 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 def _isolated_dependencies(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for name in ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CHAINSHIELD_API_TOKEN", API_TOKEN)
     get_transaction_analysis_service.cache_clear()
     app.dependency_overrides.clear()
     yield
@@ -106,13 +109,13 @@ def use(outcome: Any) -> FakeService:
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    return TestClient(app, headers=AUTH)
 
 
 @pytest.fixture
 def lenient_client() -> TestClient:
     # Returns the 500 response instead of re-raising unexpected exceptions.
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False, headers=AUTH)
 
 
 # --- Builders ----------------------------------------------------------------

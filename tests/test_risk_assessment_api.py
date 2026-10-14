@@ -30,6 +30,8 @@ from app.services.transaction_analysis import TransactionInspection
 ASSESS = "/api/v1/transactions/assess"
 INSPECT = "/api/v1/transactions/inspect"
 SECRET = "sk-test-0123456789abcdef"
+API_TOKEN = "fictional-test-token-not-a-secret-0123456789"  # test value only
+AUTH = {"Authorization": f"Bearer {API_TOKEN}"}
 
 ETH_HASH = "0x" + "ab" * 32
 TRON_HASH = "cd" * 32
@@ -65,6 +67,7 @@ def _isolated_dependencies(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for name in ("CHAINSHIELD_ETHEREUM_RPC_URL", "CHAINSHIELD_TRON_RPC_URL",
                  "CHAINSHIELD_TRON_API_KEY"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CHAINSHIELD_API_TOKEN", API_TOKEN)
     get_transaction_analysis_service.cache_clear()
     app.dependency_overrides.clear()
     yield
@@ -74,7 +77,7 @@ def _isolated_dependencies(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    return TestClient(app, headers=AUTH)
 
 
 class FakeService:

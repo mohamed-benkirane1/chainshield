@@ -16,6 +16,8 @@ from app.services.transaction_analysis import TransactionInspection
 
 LIMIT = 262_144
 SECRET = "sk-test-0123456789abcdef"
+API_TOKEN = "fictional-test-token-not-a-secret-0123456789"  # test value only
+AUTH = {"Authorization": f"Bearer {API_TOKEN}"}
 INSPECT = "/api/v1/transactions/inspect"
 ASSESS = "/api/v1/transactions/assess"
 ETH_HASH = "0x" + "ab" * 32
@@ -39,6 +41,7 @@ def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(socket, "create_connection", refuse)
     monkeypatch.setattr(socket.socket, "connect", loopback_only)
+    monkeypatch.setenv("CHAINSHIELD_API_TOKEN", API_TOKEN)
 
 
 class FakeService:
@@ -76,7 +79,7 @@ def service() -> Iterator[FakeService]:
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    return TestClient(app, headers=AUTH)
 
 
 # --- Helpers -------------------------------------------------------------------------
@@ -164,7 +167,10 @@ def body_of(sent: list[dict]) -> bytes:
 
 
 def json_headers(length: int | None = None) -> list[tuple[bytes, bytes]]:
-    headers = [(b"content-type", b"application/json")]
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"authorization", AUTH["Authorization"].encode()),
+    ]
     if length is not None:
         headers.append((b"content-length", str(length).encode()))
     return headers

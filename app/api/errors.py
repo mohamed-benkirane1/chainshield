@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.api.auth import AuthenticationError, AuthenticationNotConfiguredError
 from app.api.schemas import ErrorBody, ErrorDetail, ErrorResponse
 from app.providers.base import (
     ChainMismatchError,
@@ -73,6 +74,8 @@ _CONFLICTING_REPORTS = (
     "Several supplied reports share the same source and report identifiers "
     "with different content.",
 )
+_UNAUTHORIZED = (401, "unauthorized", "Authentication required.")
+_AUTH_NOT_CONFIGURED = (503, "auth_not_configured", "API authentication is not configured.")
 
 
 def _error_response(
@@ -108,12 +111,25 @@ def _conflicting_reports_handler(request: Request, exc: Exception) -> JSONRespon
     return _error_response(*_CONFLICTING_REPORTS)
 
 
+def _authentication_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Same code and message whatever the cause: absent, malformed or wrong token.
+    response = _error_response(*_UNAUTHORIZED)
+    response.headers["WWW-Authenticate"] = "Bearer"
+    return response
+
+
+def _auth_not_configured_handler(request: Request, exc: Exception) -> JSONResponse:
+    return _error_response(*_AUTH_NOT_CONFIGURED)
+
+
 def _unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return _error_response(*_INTERNAL)
 
 
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
+    app.add_exception_handler(AuthenticationError, _authentication_error_handler)
+    app.add_exception_handler(AuthenticationNotConfiguredError, _auth_not_configured_handler)
     app.add_exception_handler(ProviderError, _provider_error_handler)
     app.add_exception_handler(ConflictingReportError, _conflicting_reports_handler)
     app.add_exception_handler(Exception, _unexpected_error_handler)
