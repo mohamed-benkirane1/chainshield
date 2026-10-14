@@ -10,6 +10,7 @@ import urllib.request
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from app import __version__
 from app.providers.base import (
     MalformedResponseError,
     ProviderTimeoutError,
@@ -17,6 +18,9 @@ from app.providers.base import (
 )
 
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+# Identify the client honestly: some providers (e.g. behind Cloudflare) reject
+# urllib's generic "Python-urllib/x.y" User-Agent with HTTP 403.
+USER_AGENT = f"ChainShield/{__version__}"
 
 
 class JsonRpcTransport(Protocol):
@@ -63,6 +67,7 @@ class UrllibTransport:
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "User-Agent": USER_AGENT,
                 **(headers or {}),
             },
             method="POST",

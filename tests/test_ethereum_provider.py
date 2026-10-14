@@ -625,6 +625,17 @@ def test_urllib_transport_posts_json_and_decodes_response() -> None:
     assert timeout == 3.0
 
 
+def test_urllib_transport_identifies_itself_as_chainshield() -> None:
+    # Regression: Cloudflare-fronted providers answered HTTP 403 (error 1010)
+    # to urllib's default "Python-urllib/x.y" User-Agent.
+    transport, opener = _transport_with(b'{"jsonrpc": "2.0", "id": 1, "result": "0x1"}')
+
+    transport.post_json(RPC_URL, {"method": "eth_chainId"}, 3.0)
+
+    request, _ = opener.requests[0]
+    assert request.get_header("User-agent") == "ChainShield/0.1.0"
+
+
 @pytest.mark.parametrize(
     ("outcome", "expected"),
     [
