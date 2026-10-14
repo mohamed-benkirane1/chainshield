@@ -27,11 +27,13 @@ réception) : au-delà, la réponse est `413 request_too_large`, avant tout
 traitement. C'est une limite opérationnelle, pas un seuil de risque.
 
 Les deux routes `POST /api/v1/transactions/*` exigent un token Bearer (voir
-[Authentification](#authentification)). `GET /health`, `/docs` et
-`/openapi.json` restent publiques.
+[Authentification](#authentification)) et partagent un quota de 30 requêtes
+par 60 secondes (voir [Limitation de débit](#limitation-de-débit)).
+`GET /health`, `/docs` et `/openapi.json` restent publiques et non limitées.
 
-Cette API est une interface de développement uniquement : pas encore de rate
-limiting ni de stockage. Elle ne doit pas être exposée publiquement en l'état.
+Cette API est une interface de développement uniquement : pas encore de
+stockage, et une limitation de débit uniquement locale au processus. Elle ne
+doit pas être exposée publiquement en l'état.
 
 ## Périmètre envisagé (non implémenté)
 
@@ -105,8 +107,56 @@ Dans Swagger (`/docs`), cliquer sur **Authorize**, coller le token (sans le
 préfixe `Bearer`), puis appeler les routes protégées.
 
 Une exposition hors d'un poste de développement nécessiterait au minimum HTTPS,
-du rate limiting, une gestion et une rotation des secrets, de la journalisation
-et d'autres protections opérationnelles.
+une limitation de débit centralisée, une gestion et une rotation des secrets,
+de la journalisation et d'autres protections opérationnelles.
+
+## Limitation de débit
+
+Les routes `POST /api/v1/transactions/inspect` et `POST /api/v1/transactions/assess`
+acceptent au plus **30 requêtes par fenêtre glissante de 60 secondes**, pour
+limiter les abus et la consommation des ressources RPC.
+
+- **Quota global** : l'authentification repose sur un seul secret partagé, il
+  n'y a donc pas d'identité de client. Le quota est commun à tous les clients
+  authentifiés et aux deux routes : alterner les routes ne le contourne pas.
+- **Fenêtre glissante** : une requête admise à l'instant `t` compte jusqu'à
+  `t + 60 s` exactement ; il n'y a pas de remise à zéro à heure fixe.
+- **Ordre** : limite de taille du corps (`413`), puis authentification (`401`
+  ou `503 auth_not_configured`), puis quota (`429`), puis traitement. Les
+  requêtes rejetées avant le quota n'en consomment pas. Une requête admise
+  consomme une unité même si elle échoue ensuite (validation `422` d'un JSON
+  bien formé, erreur provider, etc.).
+- Un JSON syntaxiquement invalide est rejeté en `422` par FastAPI avant
+  l'authentification et le quota : il ne consomme pas de quota et n'est pas
+  limité, mais aucun traitement métier ni appel provider ne s'exécute.
+- **Réponse** au-delà du quota :
+
+  ```http
+  HTTP/1.1 429 Too Many Requests
+  Retry-After: 42
+
+  {"error": {"code": "rate_limited", "message": "Too many requests. Retry later."}}
+  ```
+
+  `Retry-After` donne, en secondes entières (arrondi supérieur, au moins 1),
+  le délai avant que la plus ancienne requête admise sorte de la fenêtre. Les
+  requêtes refusées ne sont pas comptées et ne prolongent donc pas le blocage.
+
+Limites de cette version :
+
+- le limiteur est **uniquement en mémoire** : il est remis à zéro à chaque
+  redémarrage ;
+- chaque worker ou processus (par exemple `uvicorn --workers 4`) a son propre
+  compteur, et plusieurs instances ne partagent rien : aucune limitation globale
+  n'est garantie derrière plusieurs workers ou instances ;
+- aucun en-tête IP de proxy (`X-Forwarded-For`, `Forwarded`, etc.) n'est lu ni
+  pris en compte, et il n'y a pas de quota par IP ;
+- un déploiement distribué nécessite un rate limiter centralisé ou une API
+  gateway correctement configurée ;
+- ce n'est pas une limite du nombre de requêtes exécutées simultanément : jusqu'à
+  30 requêtes admises peuvent être en cours en même temps ;
+- l'API n'est toujours pas prête pour une exposition publique sur Internet sans
+  protections complémentaires (HTTPS, gateway, supervision, etc.).
 
 ## Tests
 

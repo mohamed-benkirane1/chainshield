@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.auth import AuthenticationError, AuthenticationNotConfiguredError
+from app.api.rate_limit import RateLimitExceededError
 from app.api.schemas import ErrorBody, ErrorDetail, ErrorResponse
 from app.providers.base import (
     ChainMismatchError,
@@ -76,6 +77,7 @@ _CONFLICTING_REPORTS = (
 )
 _UNAUTHORIZED = (401, "unauthorized", "Authentication required.")
 _AUTH_NOT_CONFIGURED = (503, "auth_not_configured", "API authentication is not configured.")
+_RATE_LIMITED = (429, "rate_limited", "Too many requests. Retry later.")
 
 
 def _error_response(
@@ -122,6 +124,14 @@ def _auth_not_configured_handler(request: Request, exc: Exception) -> JSONRespon
     return _error_response(*_AUTH_NOT_CONFIGURED)
 
 
+def _rate_limited_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Only the whole-second delay is exposed, never the internal timestamps.
+    response = _error_response(*_RATE_LIMITED)
+    retry_after = exc.retry_after if isinstance(exc, RateLimitExceededError) else 1
+    response.headers["Retry-After"] = str(max(1, retry_after))
+    return response
+
+
 def _unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return _error_response(*_INTERNAL)
 
@@ -130,6 +140,7 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.add_exception_handler(AuthenticationError, _authentication_error_handler)
     app.add_exception_handler(AuthenticationNotConfiguredError, _auth_not_configured_handler)
+    app.add_exception_handler(RateLimitExceededError, _rate_limited_handler)
     app.add_exception_handler(ProviderError, _provider_error_handler)
     app.add_exception_handler(ConflictingReportError, _conflicting_reports_handler)
     app.add_exception_handler(Exception, _unexpected_error_handler)

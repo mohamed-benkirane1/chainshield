@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.assessment_schemas import TransactionAssessmentRequest, TransactionAssessmentResponse
 from app.api.auth import require_api_token
+from app.api.rate_limit import enforce_rate_limit
 from app.api.schemas import ErrorResponse, TransactionInspectionResponse
 from app.domain.analysis_input import TransactionAnalysisRequest
 from app.providers.ethereum import RPC_URL_ENV_VAR as ETHEREUM_RPC_URL_ENV_VAR
@@ -21,9 +22,13 @@ from app.services.transaction_analysis import (
     UsdtTransferProvider,
 )
 
-# Authentication runs first for every route of this router, before the
-# service dependency: an unauthenticated request never builds or calls it.
-router = APIRouter(tags=["transactions"], dependencies=[Depends(require_api_token)])
+# Router dependencies run in this order, before the service dependency:
+# authentication, then the shared rate limit. A request rejected by either
+# never builds or calls the service, and only authenticated ones use quota.
+router = APIRouter(
+    tags=["transactions"],
+    dependencies=[Depends(require_api_token), Depends(enforce_rate_limit)],
+)
 
 
 def build_transaction_analysis_service(
@@ -56,6 +61,7 @@ _ERROR_RESPONSES = {
         (401, "Missing, malformed or invalid bearer token."),
         (422, "Invalid request, conflicting reports or unsupported transaction type."),
         (413, "Request body exceeds 262144 bytes (operational limit)."),
+        (429, "Shared quota of 30 requests per 60 seconds exceeded; see Retry-After."),
         (500, "Internal error."),
         (502, "Malformed, inconsistent or wrong-network provider data."),
         (503, "Auth or provider not configured, provider unavailable or rate limited."),
