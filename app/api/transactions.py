@@ -61,7 +61,8 @@ def get_transaction_analysis_service() -> TransactionAnalysisService:
     return build_transaction_analysis_service()
 
 
-_ERROR_RESPONSES = {
+# Shared by every analysis route (also /addresses/investigate).
+ANALYSIS_ERROR_RESPONSES = {
     status: {"model": ErrorResponse, "description": description}
     for status, description in (
         (401, "Missing, malformed or invalid bearer token."),
@@ -83,7 +84,7 @@ _ERROR_RESPONSES = {
 @router.post(
     "/transactions/inspect",
     response_model=TransactionInspectionResponse,
-    responses=_ERROR_RESPONSES,
+    responses=ANALYSIS_ERROR_RESPONSES,
     summary="Inspect a transaction and its official USDT transfers",
 )
 def inspect_transaction(
@@ -102,7 +103,7 @@ def inspect_transaction(
 @router.post(
     "/transactions/assess",
     response_model=TransactionAssessmentResponse,
-    responses=_ERROR_RESPONSES,
+    responses=ANALYSIS_ERROR_RESPONSES,
     summary="Assess a transaction against client-supplied, unverified reports",
 )
 def assess_transaction_endpoint(

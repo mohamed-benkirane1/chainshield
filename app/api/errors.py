@@ -69,7 +69,7 @@ ERROR_MAPPING: tuple[tuple[type[Exception], int, str, str], ...] = (
 )
 
 _INTERNAL = (500, "internal_error", "An internal error occurred.")
-_KNOWN_FIELDS = frozenset({"kind", "network", "tx_hash", "reports"})
+_KNOWN_FIELDS = frozenset({"kind", "network", "tx_hash", "reports", "address", "tx_hashes"})
 _CONFLICTING_REPORTS = (
     422,
     "conflicting_reports",

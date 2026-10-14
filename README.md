@@ -7,6 +7,10 @@ ChainShield est une plateforme **défensive** d'aide à l'évaluation des risque
 
 ## État actuel
 
+Version publiée : **v0.1.0**. ChainShield **v0.2.0 est en cours de
+développement** : sa première unité, l'investigation d'adresse, est disponible
+sur `main` mais pas encore publiée (le package reste en 0.1.0).
+
 - `GET /health` ;
 - `POST /api/v1/transactions/inspect` : lecture seule d'une transaction Ethereum
   ou TRON (statut, valeur native) et de ses transferts USDT officiels, identifiés
@@ -14,6 +18,9 @@ ChainShield est une plateforme **défensive** d'aide à l'évaluation des risque
 - `POST /api/v1/transactions/assess` : même inspection, plus des caractéristiques
   factuelles et le rapprochement avec des signalements d'adresses **fournis par
   le client** (50 au maximum par requête).
+- `POST /api/v1/addresses/investigate` (v0.2.0, en développement) : synthèse
+  factuelle de l'activité observée d'une adresse dans 1 à 3 transactions
+  fournies (voir [Investigation d'adresse](#investigation-dadresse-v020-en-développement)).
 
 Les signalements ne sont ni vérifiés, ni récupérés, ni enrichis :
 `source_reference` n'est jamais consulté. Une correspondance recommande
@@ -26,8 +33,8 @@ Le corps de chaque requête est limité à 256 Kio (262 144 octets, comptés à 
 réception) : au-delà, la réponse est `413 request_too_large`, avant tout
 traitement. C'est une limite opérationnelle, pas un seuil de risque.
 
-Les deux routes `POST /api/v1/transactions/*` exigent un token Bearer (voir
-[Authentification](#authentification)) et partagent un quota de 30 requêtes
+Les routes d'analyse `POST /api/v1/...` exigent un token Bearer (voir
+[Authentification](#authentification)) et partagent un quota de 30 unités
 par 60 secondes (voir [Limitation de débit](#limitation-de-débit)).
 `GET /health`, `/docs` et `/openapi.json` restent publiques et non limitées.
 
@@ -112,13 +119,17 @@ de la journalisation et d'autres protections opérationnelles.
 
 ## Limitation de débit
 
-Les routes `POST /api/v1/transactions/inspect` et `POST /api/v1/transactions/assess`
-acceptent au plus **30 requêtes par fenêtre glissante de 60 secondes**, pour
-limiter les abus et la consommation des ressources RPC.
+Les routes d'analyse partagent un quota de **30 unités par fenêtre glissante de
+60 secondes**, pour limiter les abus et la consommation des ressources RPC.
+`POST /api/v1/transactions/inspect` et `POST /api/v1/transactions/assess`
+consomment 1 unité par requête ; `POST /api/v1/addresses/investigate` consomme
+**1 unité par hash fourni** (1 à 3), en une seule admission atomique : une
+requête refusée ne consomme rien.
 
 - **Quota global** : l'authentification repose sur un seul secret partagé, il
   n'y a donc pas d'identité de client. Le quota est commun à tous les clients
-  authentifiés et aux deux routes : alterner les routes ne le contourne pas.
+  authentifiés et à toutes les routes d'analyse : alterner les routes ne le
+  contourne pas.
 - **Fenêtre glissante** : une requête admise à l'instant `t` compte jusqu'à
   `t + 60 s` exactement ; il n'y a pas de remise à zéro à heure fixe.
 - **Ordre** : limite de taille du corps (`413`), puis authentification (`401`
@@ -161,9 +172,10 @@ Limites de cette version :
 
 ## Analyses simultanées
 
-Au plus **8 analyses** (`inspect` et `assess` confondues) peuvent être en cours
-en même temps dans un processus. Une requête supplémentaire n'attend pas : elle
-est refusée immédiatement.
+Au plus **8 analyses** (`inspect`, `assess` et `investigate` confondues) peuvent
+être en cours en même temps dans un processus ; une investigation occupe un seul
+créneau pour toutes ses transactions. Une requête supplémentaire n'attend pas :
+elle est refusée immédiatement.
 
 ```http
 HTTP/1.1 503 Service Unavailable
@@ -194,6 +206,62 @@ Limites :
   simultanés n'est pas garantie sans audit supplémentaire ;
 - ce n'est ni une garantie de disponibilité ni une préparation à une exposition
   sur Internet.
+
+## Investigation d'adresse (v0.2.0, en développement)
+
+`POST /api/v1/addresses/investigate` résume l'activité **observée** d'une
+adresse dans un échantillon de 1 à 3 transactions **fournies par l'analyste**,
+toutes sur le même réseau. ChainShield n'explore pas automatiquement le
+wallet : aucune autre transaction n'est recherchée, et aucune source externe
+n'est consultée.
+
+```json
+{
+  "network": "ethereum",
+  "address": "0x...",
+  "tx_hashes": ["0x...", "0x..."]
+}
+```
+
+L'adresse est validée puis normalisée (EIP-55 sur Ethereum, Base58Check sur
+TRON). Chaque hash est validé selon le réseau, et les doublons sont détectés
+après normalisation. Une entrée invalide est rejetée en `422`, sans aucun appel
+RPC ni consommation de quota.
+
+Interprétation de la réponse :
+
+- `sample_scope: "supplied_transactions_only"` : seules les transactions
+  fournies ont été inspectées. Ce n'est pas l'historique du wallet.
+- Pour chaque transaction : son statut, les rôles observés de l'adresse
+  (`transaction_sender`, `transaction_recipient`, `usdt_transfer_sender`,
+  `usdt_transfer_recipient`) et ses événements USDT officiels (`incoming`,
+  `outgoing` ou `self_transfer`, avec la contrepartie et le montant exact).
+- `presence: "not_observed"` signifie seulement que l'adresse n'apparaît pas
+  dans les champs inspectés, jamais qu'elle est sans lien ou sûre.
+- `usdt_observations: null` (transaction `pending`, `unconfirmed` ou
+  `not_found`) signifie **inconnu**, jamais zéro ; `[]` signifie qu'une
+  transaction finale ne contient aucun événement USDT impliquant l'adresse.
+- `summary.transfer_coverage` vaut `complete`, `partial` ou `none`. Les
+  compteurs et les montants `known_*` ne portent que sur les transactions dont
+  les événements sont connus. Ils valent `null` quand aucune ne l'est.
+- Un self-transfer compte dans les deux directions : il est inclus dans les
+  totaux entrants et sortants, et signalé à part (`self_transfer_count`,
+  `known_self_transfer_amount_atomic`).
+- Les montants sont des sommes exactes d'événements, en chaînes décimales. Ce
+  ne sont ni un solde, ni un flux net, ni un volume économique dédupliqué.
+  `counterparties` liste les autres parties des événements connus, sans rien
+  en déduire sur le contrôle des adresses.
+- Aucun score, solde ni verdict n'est produit.
+
+Quota et protections : la route exige le token Bearer, occupe un seul créneau
+d'analyse pendant toute l'investigation et consomme **une unité de quota par
+hash**, en une seule admission, une fois le corps validé et avant tout appel
+provider.
+
+**Fail-fast** : si l'inspection d'une seule transaction échoue (erreur
+provider, données incohérentes...), toute l'investigation échoue avec l'erreur
+sûre correspondante. Aucun résultat partiel n'est renvoyé, et les transactions
+suivantes ne sont pas inspectées.
 
 ## Sémantique des statuts et limites blockchain
 

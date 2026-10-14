@@ -51,21 +51,27 @@ class SlidingWindowRateLimiter:
         self._admissions: deque[float] = deque(maxlen=max_requests)
         self._lock = threading.Lock()
 
-    def acquire(self) -> None:
-        """Admit and record one request, or raise ``RateLimitExceededError``.
+    def acquire(self, cost: int = 1) -> None:
+        """Admit and record ``cost`` units at once, or raise ``RateLimitExceededError``.
 
-        The check and the recording happen under one lock, so concurrent
-        callers can never be admitted beyond the quota.
+        All-or-nothing: either every unit is recorded or none is. The check and
+        the recording happen under one lock, so concurrent callers can never
+        be admitted beyond the quota. On refusal, ``retry_after`` is the delay
+        until enough admissions have left the window for ``cost`` units to fit.
         """
+        if type(cost) is not int or not 1 <= cost <= self.max_requests:
+            raise ValueError("cost must be an integer between 1 and max_requests")
         with self._lock:
             now = self._clock()
             expired_before = now - self.window_seconds
             while self._admissions and self._admissions[0] <= expired_before:
                 self._admissions.popleft()
-            if len(self._admissions) < self.max_requests:
-                self._admissions.append(now)
+            excess = len(self._admissions) + cost - self.max_requests
+            if excess <= 0:
+                self._admissions.extend([now] * cost)
                 return
-            wait = self._admissions[0] + self.window_seconds - now
+            # The ``excess`` oldest admissions must expire first.
+            wait = self._admissions[excess - 1] + self.window_seconds - now
         raise RateLimitExceededError(retry_after=max(1, math.ceil(wait)))
 
     def reset(self) -> None:
